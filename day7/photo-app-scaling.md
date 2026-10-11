@@ -126,6 +126,21 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
                 | Read replica |<--+  +--------+
                 +--------------+
 
+A design trade-off is a choice between design options where improving one quality costs another.
+
+Trade-off 1: Make thumbnails in the background (queue + worker) vs during the upload.
+
+	•	Chosen: the app server saves the photo, puts a job on the queue and replies at once; a worker makes the thumbnail.
+	•	Alternative: make the thumbnail inside the upload request, with no queue or worker.
+	•	Gain: fast upload response, and spikes (58 uploads/s at peak) wait in the queue instead of slowing the site.
+	•	Give up: simplicity and instant thumbnails. The photo briefly has a placeholder, and we must run and monitor a queue, retries and failed jobs.
+
+Trade-off 2: Cache feeds in Redis vs always reading from the database.
+
+	•	Chosen: the app server reads feeds from the cache and only asks a read replica on a miss.
+	•	Alternative: query the database for every feed view.
+	•	Gain: database reads fall from about 2,894/s to about 290/s, so 2 read replicas are enough.
+	•	Give up: freshness and simplicity. A feed can be slightly old, cache clearing is hard to get right, and the cache is one more system to run (so it gets its own replica).
 ---
 
 ## 7. What each component does (one sentence each)
