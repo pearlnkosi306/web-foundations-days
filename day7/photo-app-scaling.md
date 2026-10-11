@@ -98,37 +98,31 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
 
 ## 6. Architecture diagram
 
-          +-----------------------------------------------------------+
-          |                Users (phones and browsers)                |
-          +-----------------------------------------------------------+
-                        | API requests                          ^ photos and
-                        | (feed, upload)                        | thumbnails
-                        v                                       |
-                +---------------+                           +-------+
-                | Load balancer |                           |  CDN  |
-                +---------------+                           +-------+
-                        |                                       ^
-                        v                                       |
-              +-------------------+   CDN fetches the file only |
-              |    App servers    |             on a cache miss |
-              |   (many copies)   |                             |
-              +-------------------+                             |
-                        |                                       |
-         +--------------+----------+------+------------+        |
-         v              v          |      v            v        |
-  +------------+ +------------+    |  +-------+   +------------------+
-  |   Cache    | |  Database  |    |  | Queue |   |  Object storage  |
-  |(e.g. Redis)| | (primary)  |    |  +-------+   |  (photo files)   |
-  +------------+ +------------+    |      |       +------------------+
-    copies every change |          |      v               ^
-                        v          |  +--------+          | read original,
-                +--------------+   |  | Worker |----------+ save thumbnail
-                | Read replica |<--+  +--------+
-                +--------------+
-				
-
-
-
++------------------------------------------+
+|       Users (phones and browsers)        |
++------------------------------------------+
+    |  API calls                        ^ images 
+    v                                   |
++---------------+                   +-------+
+| Load balancer | <- spreads load   |  CDN  |  <- images near users
++---------------+                   +-------+
+    |                                   ^
+    v                                   | fetch on miss
++---------------+   save original   +----------------+
+|  App servers  |------------------>| Object storage |  <- photo files
+| (many copies) |                   +----------------+
++-------|-------+                             ^
+  +-----+-----------+------------+            | save thumbnail
+  v                 v            v            | read original
++----------+  +------------+ +--------+    +------------+
+|  Cache   |  | DB primary | | Queue  |--->|   Worker   |  <- background job
+| (Redis)  |  |  (writes)  | | (jobs) |    |(thumbnails)|
++----------+  +------------+ +--------+    +------------+
+      | miss        |
+      |             v copies every change
+      |     +--------------+
+      +---->| Read replica |  <- answers feed reads
+            +--------------+
 
 A design trade-off is a choice between design options where improving one quality costs another.
 
