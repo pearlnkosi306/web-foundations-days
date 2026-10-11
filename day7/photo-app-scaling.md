@@ -126,6 +126,8 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
                 | Read replica |<--+  +--------+
                 +--------------+
 
+
+
 A design trade-off is a choice between design options where improving one quality costs another.
 
 Trade-off 1: Make thumbnails in the background (queue + worker) vs during the upload.
