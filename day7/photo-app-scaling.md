@@ -98,23 +98,33 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
 
 ## 6. Architecture diagram
 
-```
-Users --------------------------------> CDN --(miss)--> Object storage
-  |                                                      ^          ^
-  v                                                      |          |
-Load balancer (x2)                                       |(1)       |(4)
-  |                                                      |          |
-  v                                                      |          |
-App servers (x12) ----(1) save original -----------------+          |
-  |      |                                                          |
-  |      +---(3) job---> Queue ---> Workers (x40) --(4) thumbnail --+
-  |                                      |
-  |--(2) photo row --> DB primary <------+ (5) mark ready
-  |                       | copies changes
-  +-- feed reads --> Cache --(miss)--> Read replicas (x2)
-```
-
-Numbers (1) to (5) match the upload steps in section 8.
+          +-----------------------------------------------------------+
+          |                Users (phones and browsers)                |
+          +-----------------------------------------------------------+
+                        | API requests                          ^ photos and
+                        | (feed, upload)                        | thumbnails
+                        v                                       |
+                +---------------+                           +-------+
+                | Load balancer |                           |  CDN  |
+                +---------------+                           +-------+
+                        |                                       ^
+                        v                                       |
+              +-------------------+   CDN fetches the file only |
+              |    App servers    |             on a cache miss |
+              |   (many copies)   |                             |
+              +-------------------+                             |
+                        |                                       |
+         +--------------+----------+------+------------+        |
+         v              v          |      v            v        |
+  +------------+ +------------+    |  +-------+   +------------------+
+  |   Cache    | |  Database  |    |  | Queue |   |  Object storage  |
+  |(e.g. Redis)| | (primary)  |    |  +-------+   |  (photo files)   |
+  +------------+ +------------+    |      |       +------------------+
+    copies every change |          |      v               ^
+                        v          |  +--------+          | read original,
+                +--------------+   |  | Worker |----------+ save thumbnail
+                | Read replica |<--+  +--------+
+                +--------------+
 
 ---
 
