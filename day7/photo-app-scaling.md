@@ -1,30 +1,21 @@
 # SnapShare Scaling Plan
 
-SnapShare is a photo-sharing app. Users upload photos and scroll a feed of photos from the people they follow. This plan works out how big the system is and how I would build it so it keeps working as it grows.
+SnapShare is a photo-sharing app. Users upload photos and scroll a feed of photos from people they follow. This plan works out how big the system is, then shows how I would build it so it keeps working as it grows.
 
 ---
 
 ## 1. Assumptions
 
-These are the starting facts I was given, plus the extra assumptions I made so the maths is clear.
-
-**Given:**
-
-- 10,000,000 registered users
-- 10% of them are active each day
-- Each active user uploads 1 photo per day
-- Each active user views 50 feed pages per day
-- An average photo is 2 MB
-- Each photo also gets a thumbnail of 50 KB
+**Given:** 10,000,000 registered users; 10% active each day; each active user uploads 1 photo and views 50 feed pages per day; average photo 2 MB; each photo also gets a 50 KB thumbnail.
 
 **My extra assumptions:**
 
-- 1 day = 86,400 seconds, and 1 year = 365 days
-- Peak traffic is 5 times the average (as the task says)
-- 1 TB = 1,000,000 MB (I used decimal units to keep the numbers simple)
-- One "feed view" means one request for one page of the feed
-- Storage only counts the photo files (the original and the thumbnail). It does not count database rows, backups or the extra copies a storage service keeps for safety, so the real number would be higher
-- The number of users stays the same for the whole year (no growth), so the yearly figure is a starting point
+- 1 day = 86,400 seconds; 1 year = 365 days; decimal units (1 TB = 1,000,000 MB).
+- Peak traffic = 5 x average.
+- One feed view = one request for one page of the feed. A feed page shows **10 thumbnails**.
+- Storage counts only photo files (original + thumbnail), not database rows, backups or storage copies, so the real number is higher.
+- No user growth during the year, so the yearly figure is a starting point.
+- Sizing guesses: one app server handles about 500 requests/s; one worker makes a thumbnail in about 0.5 s; the CDN serves 90% of image requests without asking storage; an average user follows 200 people.
 
 **Daily active users (DAU):**
 
@@ -38,144 +29,167 @@ DAU = 10,000,000 x 10% = 1,000,000 active users per day
 
 | What | Working | Result |
 |---|---|---|
-| Uploads per day | 1,000,000 users x 1 photo | 1,000,000 |
-| Uploads per second (average) | 1,000,000 / 86,400 | about 11.6 per second |
-| Uploads per second (peak) | 11.6 x 5 | about 58 per second |
-| Feed views per day | 1,000,000 users x 50 | 50,000,000 |
-| Feed views per second (average) | 50,000,000 / 86,400 | about 579 per second |
-| Feed views per second (peak) | 578.7 x 5 | about 2,894 per second |
+| Uploads per day | 1,000,000 x 1 | 1,000,000 |
+| Uploads per second (average) | 1,000,000 / 86,400 | about 11.6 /s |
+| Uploads per second (peak) | 11.6 x 5 | about 58 /s |
+| Feed views per day | 1,000,000 x 50 | 50,000,000 |
+| Feed views per second (average) | 50,000,000 / 86,400 | about 579 /s |
+| Feed views per second (peak) | 579 x 5 | about 2,894 /s |
 | Storage per day | 1,000,000 x (2 MB + 0.05 MB) | 2.05 TB |
-| Storage per year | 2.05 TB x 365 | about 748 TB (roughly 0.75 PB) |
+| **Storage per year** | 2.05 TB x 365 | **about 748 TB (0.75 PB)** |
 
-**Storage per year, split up:**
+Storage split: originals 1,000,000 x 2 MB x 365 = 730 TB; thumbnails 1,000,000 x 50 KB x 365 = 18.25 TB. Thumbnails add only about 2.5%. Storage grows by about 62 TB every month.
 
-- Original photos: 1,000,000 x 2 MB x 365 = 730 TB
-- Thumbnails: 1,000,000 x 50 KB x 365 = 18.25 TB
-- Total: 730 + 18.25 = 748.25 TB
+### Bandwidth (network can be a bottleneck as well as disk)
 
-The thumbnails only add about 2.5% extra storage.
+| What | Working | Result |
+|---|---|---|
+| Upload (ingress), average | 11.6 x 2 MB | about 23 MB/s (0.19 Gbps) |
+| Upload (ingress), peak | 58 x 2 MB | about 116 MB/s (0.93 Gbps) |
+| Thumbnail requests, average / peak | 579 x 10 / 2,894 x 10 | about 5,800 / 28,900 per second |
+| Feed download (egress), peak, thumbnails | 2,894 x 10 x 50 KB | about 1.45 GB/s (**11.6 Gbps**) |
+| Feed download (egress), peak, originals | 2,894 x 10 x 2 MB | about 58 GB/s (**463 Gbps**) |
+| Traffic reaching storage after CDN (10% miss) | 11.6 Gbps x 10% | about 1.2 Gbps |
 
-**Extra number I worked out (upload bandwidth):**
-
-- Average: 11.6 uploads per second x 2 MB = about 23 MB per second
-- Peak: 58 uploads per second x 2 MB = about 116 MB per second (roughly 0.93 Gbit per second)
+Sending 2 MB originals in the feed would need 40 times more bandwidth than thumbnails. Even with thumbnails, 11.6 Gbps is too much for our own servers, so the CDN must carry it.
 
 ---
 
 ## 3. Read-heavy or write-heavy?
 
-SnapShare is **read-heavy**.
-
-Every active user views 50 feed pages for every 1 photo they upload, so reads outnumber writes by about 50 to 1 (579 feed views per second compared with 11.6 uploads per second on average). It is even more lopsided than that, because each feed page shows several photos, so the number of image downloads is higher than the number of feed views.
+SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed views/s vs 11.6 uploads/s), and it is more lopsided than that because every feed page loads about 10 images.
 
 **What this means for the design:**
 
-- Most of the effort should go into making reads fast and cheap: a cache, a read replica, and a CDN for the photo files.
-- The feed should show the small 50 KB thumbnails, not the 2 MB originals. That is 40 times less data for every photo on the screen.
-- Reads can be scaled by adding more copies (more app servers, more replicas, more cache), so the design should make that easy.
-- Writes are rare, but each upload is big (2 MB), so the upload path still needs care. The photo file must go to storage built for large files, and slow work (making thumbnails) should happen in the background.
-- The one thing that grows forever is storage (about 748 TB a year), so the storage needs to be cheap and able to grow without limit.
+- Spend the effort on fast, cheap reads: a CDN, a cache and read replicas.
+- Show 50 KB thumbnails in the feed, and load the 2 MB original only when a user opens a photo.
+- Reads scale by adding copies (app servers, replicas, cache), so keep every layer easy to copy.
+- Writes are rare, so one primary database is enough. But each upload is big (2 MB), so files go to object storage and slow work (thumbnails) runs in the background.
+- Storage is the one thing that grows forever, so it must be cheap and able to grow without limit.
 
 ---
 
 ## 4. Why photos should not be stored inside the database
 
-A database is good at small, structured rows that we search and update (users, follows, captions). Photos are big binary files, and putting them in the database causes problems:
+- **Size:** 748 TB a year is far too much for a database server, and database disks are expensive and hard to grow.
+- **Memory:** 2 MB files fill the database's memory and push out the small, hot rows (users, follows, captions) that the feed needs.
+- **Replication:** the read replica copies everything on the primary, so every replica and backup would need a full copy of every photo, and replication would fall behind.
+- **No CDN:** a CDN cannot pull files out of database rows; it needs a simple URL.
+- **Cost:** object storage is much cheaper per TB.
 
-- **Size:** 748 TB a year is far too much for a database server. Database disks are expensive and hard to grow.
-- **Speed:** sending 2 MB files through the database uses up its connections and memory, which slows down the normal queries that the feed depends on.
-- **Copying:** the read replica copies everything in the primary database. If photos were inside, every replica and every backup would need a full copy of every photo.
-- **No CDN:** a CDN cannot pull files straight out of a database. It needs a simple file address (a URL).
-- **Cost:** storing files in object storage is much cheaper per TB than storing them in a database.
-
-**Where they go instead:** photos and thumbnails go in **object storage** (a service made for storing huge numbers of files, such as Amazon S3). The database only keeps a small row about each photo: the photo ID, the user ID, the file key (the name of the file in object storage), the thumbnail key, the caption, the time, and a status. The CDN then serves the files using those keys.
+**Where they go instead:** **object storage** (for example Amazon S3). The database keeps only a small row per photo: photo ID, user ID, file key, thumbnail key, caption, time and status (about 300 bytes).
 
 ---
 
-## 5. Architecture diagram
+## 5. Sizing each layer
+
+| Layer | Calculation | Plan |
+|---|---|---|
+| App servers | peak 2,894 + 58 = about 2,950 req/s; 2,950 / 500 = 6 | **12 servers** (double for headroom and failures), in 3 zones |
+| Cache | feed of about 50 photo IDs + details = 5 KB per user x 1M DAU = 5 GB | **2 Redis nodes** (primary + replica), about 16 GB each |
+| Database reads | feed reads 2,894/s x 10% cache miss | about 290 reads/s, easy for **2 read replicas** |
+| Database size | photo rows 300 B x 1M x 365 = 110 GB/year; follows 10M x 200 x 16 B = 32 GB | under 1 TB, so **one primary** is enough for now |
+| Database writes | 58 uploads/s at peak, plus follows and likes | tiny, one primary copes |
+| Queue | 58 jobs/s at peak | one managed queue |
+| Workers | 58 jobs/s x 0.5 s = 29 busy workers | **40 workers** so a backlog can drain |
+| Object storage | 62 TB per month, grows forever | managed service with built-in copies |
+
+---
+
+## 6. Architecture diagram
 
 ```
-          +-----------------------------------------------------------+
-          |                Users (phones and browsers)                |
-          +-----------------------------------------------------------+
-                        | API requests                          ^ photos and
-                        | (feed, upload)                        | thumbnails
-                        v                                       |
-                +---------------+                           +-------+
-                | Load balancer |                           |  CDN  |
-                +---------------+                           +-------+
-                        |                                       ^
-                        v                                       |
-              +-------------------+   CDN fetches the file only |
-              |    App servers    |             on a cache miss |
-              |   (many copies)   |                             |
-              +-------------------+                             |
-                        |                                       |
-         +--------------+----------+------+------------+        |
-         v              v          |      v            v        |
-  +------------+ +------------+    |  +-------+   +------------------+
-  |   Cache    | |  Database  |    |  | Queue |   |  Object storage  |
-  |(e.g. Redis)| | (primary)  |    |  +-------+   |  (photo files)   |
-  +------------+ +------------+    |      |       +------------------+
-    copies every change |          |      v               ^
-                        v          |  +--------+          | read original,
-                +--------------+   |  | Worker |----------+ save thumbnail
-                | Read replica |<--+  +--------+
-                +--------------+
+Users --------------------------------> CDN --(miss)--> Object storage
+  |                                                      ^          ^
+  v                                                      |          |
+Load balancer (x2)                                       |(1)       |(4)
+  |                                                      |          |
+  v                                                      |          |
+App servers (x12) ----(1) save original -----------------+          |
+  |      |                                                          |
+  |      +---(3) job---> Queue ---> Workers (x40) --(4) thumbnail --+
+  |                                      |
+  |--(2) photo row --> DB primary <------+ (5) mark ready
+  |                       | copies changes
+  +-- feed reads --> Cache --(miss)--> Read replicas (x2)
 ```
 
-**How to read the arrows:**
-
-- Users send API requests (load the feed, upload a photo) to the load balancer, which passes them to one of the app servers.
-- The app servers check the cache first. Writes go to the primary database. Feed reads go to the read replica. The primary database keeps the replica up to date by copying every change to it.
-- When a photo is uploaded, the app server saves the file in object storage and puts a "make a thumbnail" job on the queue.
-- The worker takes jobs from the queue, reads the original photo from object storage, saves the thumbnail back into object storage, and then marks the photo as ready in the database.
-- Users download photos and thumbnails through the CDN. The CDN only goes to object storage when it does not already have a copy.
+Numbers (1) to (5) match the upload steps in section 8.
 
 ---
 
-## 6. What each component does (one sentence each)
+## 7. What each component does (one sentence each)
 
-- **CDN:** it fixes slow downloads for users who are far from our servers, and takes most of the photo traffic off our storage, by keeping copies of popular photos and thumbnails on servers close to the users.
-- **Load balancer:** it fixes one server getting overloaded (or one broken server taking the app down) by spreading requests across many app servers and skipping any that are not working.
-- **App servers:** they run the SnapShare code (login, feed, upload) and, because they keep no data of their own, we can handle more traffic just by adding more identical copies.
-- **Cache:** it fixes the database being asked the same question again and again (like building a popular feed) by keeping recent answers in fast memory.
-- **Database (primary):** it fixes where to keep the important structured data (users, follows, photo records) so it stays correct, by sending every write through one trusted place.
-- **Read replica:** it fixes the heavy read load (about 2,894 feed views per second at peak) overwhelming the primary database by answering reads from an up-to-date copy.
-- **Object storage:** it fixes where to keep a huge and growing number of big files (about 748 TB a year) cheaply and safely, which a database cannot do well.
-- **Queue:** it fixes the upload request having to wait for slow work, because the app server can drop a "make a thumbnail" job on the queue and reply straight away, and the job waits safely if the workers are busy.
-- **Worker:** it fixes thumbnail creation slowing down the website by doing that job in the background, and we can add more workers if the queue gets long.
-
----
-
-## 7. Upload flow, step by step
-
-1. The user picks a photo, adds a caption and taps Upload. The app sends the photo to SnapShare, along with the user's login token.
-2. The request reaches the **load balancer**, which sends it to a healthy **app server**.
-3. The app server checks the login token and checks the photo (allowed file type and size limit).
-4. The app server saves the original photo in **object storage** under a unique key, for example `photos/<user_id>/<photo_id>.jpg`.
-5. The app server adds a row for the photo to the **primary database** (photo ID, user ID, file key, caption, time) with the status `processing`. It does this after the file is saved, so no row ever points to a missing file.
-6. The app server puts a message on the **queue**, for example `{photo_id, file_key}`.
-7. The app server replies to the user straight away ("upload successful"). The user does not wait for the thumbnail.
-8. A **worker** takes the message from the queue, reads the original from object storage, makes a 50 KB thumbnail (resize and compress), and saves it in object storage.
-9. The worker updates the photo's row in the database: it adds the thumbnail key and changes the status to `ready`. If the job fails, it goes back on the queue and is tried again. After a few failed tries it is set aside so someone can look at it.
-10. The change is copied to the **read replica**. The next time the user's followers load their feed (once the cached copy has expired), the new photo appears. The **CDN** gets the thumbnail from object storage the first time someone asks for it, and keeps a copy for everyone after that.
+- **CDN:** it fixes slow downloads for faraway users and keeps most of the 11.6 Gbps of photo traffic off our servers, by keeping copies of popular photos and thumbnails close to users.
+- **Load balancer:** it fixes one server being overloaded (or one broken server taking the app down) by spreading requests across app servers and skipping any that are not working.
+- **App servers:** they run the SnapShare code (login, feed, upload) and, since they keep no data of their own, we handle more traffic just by adding identical copies.
+- **Cache:** it fixes the database being asked the same question again and again by keeping ready-made feeds in fast memory.
+- **Database (primary):** it fixes where to keep important structured data (users, follows, photo records) so it stays correct, by sending every write through one trusted place.
+- **Read replica:** it fixes heavy read load overwhelming the primary by answering reads from an up-to-date copy, and it can take over if the primary fails.
+- **Object storage:** it fixes where to keep a huge, growing number of big files (748 TB a year) cheaply and safely, which a database cannot do well.
+- **Queue:** it fixes the upload request waiting for slow work, because the app server drops a job on the queue and replies at once, and jobs wait safely if workers are busy.
+- **Worker:** it fixes thumbnail creation slowing down the website by doing it in the background, and we add more workers if the queue grows.
 
 ---
 
-## 8. Trade-offs
+## 8. Upload flow, step by step
 
-**1. Cache: faster reads, but the data can be out of date.**
-A cache cuts the load on the database a lot, which matters because SnapShare is read-heavy. The cost is that cached feeds can be a little old, so a new photo may take a short while to show up (until the cached copy expires or is refreshed). Deciding when to throw away cached data is also hard to get right, and the cache is one more thing to run.
+1. The user picks a photo, adds a caption and taps Upload. The app sends it with the user's login token.
+2. The **load balancer** sends the request to a healthy **app server**.
+3. The app server checks the token and the photo (allowed file type, size limit, really an image).
+4. **(1)** The app server saves the original in **object storage** under a unique key, for example `photos/<user_id>/<photo_id>.jpg`.
+5. **(2)** It adds a row to the **primary database** (photo ID, user ID, file key, caption, time) with status `processing`. This happens after the file is saved, so no row ever points to a missing file.
+6. **(3)** It puts a message on the **queue**, for example `{photo_id, file_key}`.
+7. It replies "upload successful" straight away. The user does not wait for the thumbnail.
+8. **(4)** A **worker** takes the message, reads the original, makes a 50 KB thumbnail (resize and compress) and saves it in object storage.
+9. **(5)** The worker updates the photo row with the thumbnail key and status `ready`. If the job fails it goes back on the queue and is retried; after a few failures it moves to a "failed jobs" list for someone to check. Retrying is safe because making the same thumbnail twice gives the same result.
+10. The worker then adds the photo ID to the cached feeds of the uploader's followers, so it shows up in their feeds (see trade-off 1).
+11. The change is copied to the read replicas. The **CDN** fetches the thumbnail from object storage the first time someone asks for it and serves everyone after that from its own copy.
 
-**2. Read replica: handles more reads, but copies are slightly behind.**
-The replica takes read traffic off the primary database, but it learns about changes a moment after the primary does (replication lag). A user could upload a photo and not see it straight away if their next request is answered by the replica. One fix is to read a user's own recent photos from the primary. It also costs extra money to run another database server.
+**Feed flow:** the app server reads the user's feed from the cache; on a miss it asks a read replica, rebuilds the feed and stores it in the cache. The response contains thumbnail URLs, which the phone loads from the CDN.
 
-**3. Queue and worker: fast uploads, but the thumbnail is not instant.**
-Making thumbnails in the background keeps uploads quick and lets us handle spikes, because jobs wait in the queue. The cost is that for a short time the photo exists without a thumbnail (the app can show a placeholder). It also adds more parts to run and watch: retries, failed jobs, and what happens if the queue gets very long.
+---
 
-**4. Uploading through the app servers is simple, but it uses their bandwidth.**
-In my flow the photo passes through an app server before reaching object storage. This is easy to build and lets the server check the photo first. But at peak that is about 116 MB per second of upload traffic going through the app servers. A more advanced option is to let the user's phone upload straight to object storage using a temporary upload link (a pre-signed URL). That takes the load off the app servers but makes the flow more complicated.
+## 9. Trade-offs
 
-**5. Thumbnails: a little extra storage for much faster feeds.**
-Storing a 50 KB thumbnail for every photo adds only about 18 TB a year (around 2.5% more storage). In return the feed loads 40 times less data for each photo, so it is much faster and the CDN bill is lower. The cost is the extra storage and the worker that creates them.
+**1. Building feeds: push or pull.**
+Pushing a new photo into every follower's cached feed (fan-out on write) makes reads very fast, which suits a 50-to-1 read-heavy app. At 200 followers that is 58 x 200 = about 11,600 cache writes per second at peak, which is fine. The cost is that a user with millions of followers would cause millions of writes for one photo. For those few users I would not push; their photos are pulled and merged into the feed when it is read.
+
+**2. Cache: faster reads, but data can be out of date.**
+A cache removes most database load, but a cached feed can be a little old and deciding when to clear it is hard. The cache is also one more thing to run, so if it fails the database must be able to cope for a short time (about 2,900 reads/s without the cache is too much for the replicas, so we rely on the cache having a replica too).
+
+**3. Read replica: more reads, but copies lag behind.**
+Replicas take read traffic from the primary, but they learn about changes a moment later. A user might upload a photo and not see it at once. Fix: read a user's own recent photos from the primary. Replicas also cost extra money.
+
+**4. Queue and worker: fast uploads, but the thumbnail is not instant.**
+Background work keeps uploads quick and absorbs spikes. For a short time the photo has no thumbnail (the app shows a placeholder), and we must run and watch retries, failed jobs and queue length.
+
+**5. Upload through app servers: simple, but heavy.**
+Sending the photo through the app server makes validation easy, but peak upload traffic (about 116 MB/s, nearly 1 Gbps) passes through our servers. A better version for later is a **pre-signed URL**: the app server gives the phone a temporary link and the phone uploads straight to object storage, then tells us it is done. That removes the load but makes the flow more complex.
+
+**6. Thumbnails: a little storage for much faster feeds.**
+They add about 18 TB a year (2.5%) and need a worker, but cut feed bandwidth from about 463 Gbps to 11.6 Gbps at peak.
+
+---
+
+## 10. Single points of failure and failures
+
+| If this fails | What happens | How we cope |
+|---|---|---|
+| App server | requests to it fail | load balancer stops using it; 12 servers across 3 zones |
+| Load balancer | no traffic gets in | run two (active/standby) |
+| Cache | feeds slower | Redis replica takes over; app falls back to replicas |
+| DB primary | no new uploads or posts | promote a read replica; reads keep working meanwhile |
+| Worker | thumbnails delayed | jobs stay on the queue; other workers continue |
+| Queue | jobs can be lost | use a durable managed queue with retries |
+| Object storage | files unavailable | managed service stores copies in several places |
+| CDN | slower, more load on storage | CDN has many edge servers; storage can serve directly as backup |
+
+**What I would monitor:** upload and feed latency, error rate, cache hit rate (aim for 90%+), CDN hit rate, replication lag, queue length and age of oldest job, storage used.
+
+---
+
+## 11. If traffic grows 10 times
+
+Add app servers, replicas, cache nodes and workers first (they scale by copying). Then shard the database by user ID (the primary would pass about 1 TB a year and about 600 writes/s at peak), move to pre-signed uploads, and add storage tiers (move old photos to cheaper "cold" storage).
+
