@@ -97,7 +97,7 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
 ---
 
 ## 6. Architecture diagram
-
+—
           +-----------------------------------------------------------+
           |                Users (phones and browsers)                |
           +-----------------------------------------------------------+
@@ -125,8 +125,7 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
                 +--------------+   |  | Worker |----------+ save thumbnail
                 | Read replica |<--+  +--------+
                 +--------------+
-
-
+-
 
 A design trade-off is a choice between design options where improving one quality costs another.
 
