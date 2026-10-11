@@ -101,7 +101,7 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
 +------------------------------------------+
 |       Users (phones and browsers)        |
 +------------------------------------------+
-    |  API calls                        ^ images 
+    |  API calls                        ^ images
     v                                   |
 +---------------+                   +-------+
 | Load balancer | <- spreads load   |  CDN  |  <- images near users
@@ -123,6 +123,7 @@ SnapShare is **read-heavy**. Reads outnumber writes about 50 to 1 (579 feed view
       |     +--------------+
       +---->| Read replica |  <- answers feed reads
             +--------------+
+
 
 A design trade-off is a choice between design options where improving one quality costs another.
 
