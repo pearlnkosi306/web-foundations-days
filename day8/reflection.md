@@ -1,0 +1,7 @@
+# Reflection
+
+**The most difficult concept.** The hardest idea for me was thinking about many users acting at the same moment, especially how a database stops two people from buying the same seat. When I imagined one user at a time, everything seemed fine, so I could not even see the problem. I overcame it by slowing down and tracing the steps for two users line by line, the same way I fixed my mistakes on earlier assignments. Once I saw that "check the seat, then update it" leaves a gap, transactions and constraints finally made sense.
+
+**What I would improve in my capstone.** Based on the feedback I received, I would make QuickNotes feel like a real product and not only a demo. At the moment it talks to JSONPlaceholder, which pretends to save notes but does not keep them. I would add a small backend with a real database, so notes are truly saved, and I would improve the error handling and loading messages so the user always knows what is happening. I would also check that my API, data model and architecture documents describe exactly what I built.
+
+**What I will learn next.** Next I want to learn how to build my own backend with Node.js and a SQL database, and how to test it properly. I also want to start using Python for data, because my degree in applied aviation meteorology involves a lot of weather data. Alongside this, I will keep working on my calculus, because I will need it for my studies.
